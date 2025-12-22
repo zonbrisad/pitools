@@ -6,7 +6,7 @@
 #
 # File:     pgio
 # Author:   Peter Malmberg  <peter.malmberg@gmail.com>
-# Org:      __ORGANISTATION__
+# Org:      
 # Date:     2025-04-09
 # License:
 # Python:   >= 3.0
@@ -17,6 +17,7 @@
 # https://gpiozero.readthedocs.io/en/latest/recipes.html
 # https://pypi.org/project/RPi.GPIO/
 # https://gpiozero.readthedocs.io/en/latest/migrating_from_rpigpio.html
+#
 
 import traceback
 import os
