@@ -1,0 +1,313 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# ----------------------------------------------------------------------------
+#
+# Simple thermostat for Raspberry Pi using GPIO ports and DS18B20 temperature sensor
+#
+# File:     pthermostat
+# Author:   Peter Malmberg  <peter.malmberg@gmail.com>
+# Org:      
+# Date:     2025-04-09
+# License:
+# Python:   >= 3.0
+#
+# ----------------------------------------------------------------------------
+#
+# https://sourceforge.net/p/raspberry-gpio-python/wiki/Examples/
+# https://gpiozero.readthedocs.io/en/latest/recipes.html
+# https://pypi.org/project/RPi.GPIO/
+# https://gpiozero.readthedocs.io/en/latest/migrating_from_rpigpio.html
+#
+
+import traceback
+import os
+import sys
+import logging
+import argparse
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QIcon, QCloseEvent
+from PyQt5.QtWidgets import (
+    QApplication,
+    QFormLayout,
+    QMainWindow,
+    QWidget,
+    QMenu,
+    QMenuBar,
+    QAction,
+    QStatusBar,
+    QDialog,
+    QDialogButtonBox,
+    QMessageBox,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QTextEdit,
+    QLineEdit,
+    QCheckBox,
+    QComboBox,
+)
+from infodialog import InfoDialog
+from pae import PaeNode, PaeType, PaeMotor
+from qpaewidgets import QPaePlot, QPaePlots, pg_color_red, pg_color_green, pg_color_blue, pg_color_white, pg_color_yellow, pg_color_cyan, pg_color_magenta
+
+
+# try:
+#     import RPi.GPIO as GPIO
+# except ImportError:
+#     print("RPi.GPIO not available, running in simulation mode.")
+#     GPIO = None
+
+
+class App:
+    NAME = "pgio"
+    VERSION = "0.01"
+    DESCRIPTION = "simple gui for handling raspberry pi gpio ports."
+    LICENSE = ""
+    AUTHOR = "Peter Malmberg"
+    EMAIL = "<peter.malmberg@gmail.com>"
+    ORG = "__ORGANISATION__"
+    HOME = ""
+    ICON = ""
+
+
+# Qt main window settings
+win_title = App.NAME
+win_x_size = 420
+win_y_size = 240
+
+css = """
+    body {
+        font-family: Courier New, monospace;
+        }
+"""
+
+def board_info() -> None:
+    board_info=f"""<center><h2>System information</h2></center>
+<center>
+<table>
+<tr>
+<td><b>Board:</b></td><td>{GPIO.RPI_INFO['TYPE']}</td>
+</tr>
+<tr>
+<td><b>CPU:</b></td><td>{GPIO.RPI_INFO['PROCESSOR']}</td>
+</tr>
+<tr>
+<td><b>RAM:</b></td><td>{GPIO.RPI_INFO['RAM']}</td>
+</tr>
+<tr>
+<td><b>Revision:</b></td><td>{GPIO.RPI_INFO['REVISION']}</td>
+</tr>
+<tr>
+<td><b>P1 Revision:</b></td><td>{GPIO.RPI_INFO['P1_REVISION']}</td>
+</tr>
+</table>
+</center>
+"""
+    InfoDialog.show(board_info, title="System info", y=200)
+
+
+def program_info() -> None:
+    about_html = f"""
+<center><h2>{App.NAME}</h2></center>
+<br>
+
+<style>hr {{
+  border: 0;
+  height: 1px;
+  background: #eee;
+}}
+</style>
+<b>Version: </b>{App.VERSION}
+<br>
+<b>Author: </b>{App.AUTHOR}
+<br>
+<hr>
+<br>
+{App.DESCRIPTION}
+<br>
+"""
+    InfoDialog.show(about_html, title="About")
+
+
+class MainWindow(QMainWindow):
+    def __init__(self, parent=None):
+        super(MainWindow, self).__init__(parent)
+
+        self.resize(win_x_size, win_y_size)
+        self.setWindowTitle(win_title)
+        # self.setWindowIcon(QIcon(App.ICON))
+
+        # Create central widget
+        self.centralwidget = QWidget(self)
+        self.setCentralWidget(self.centralwidget)
+
+        self.verticalLayout = QVBoxLayout(self.centralwidget)
+        self.verticalLayout.setSpacing(2)
+        self.verticalLayout.setContentsMargins(2, 2, 2, 2)
+
+        self.start_button = QPushButton("Start", self.centralwidget)
+        self.start_button.setMinimumHeight(45)
+        self.verticalLayout.addWidget(self.start_button)
+
+        self.thermal_sensors = QComboBox(self.centralwidget)
+        #self.verticalLayout.addWidget(self.thermal_sensors)
+
+        self.heater_output = QComboBox(self.centralwidget)
+        #self.verticalLayout.addWidget(self.heater_output)
+
+        self.form_layout = QFormLayout(self.centralwidget)
+        self.form_layout.addRow("Thermal sensor:", self.thermal_sensors)
+        self.form_layout.addRow("Heater output:", self.heater_output)
+        self.verticalLayout.addLayout(self.form_layout)
+
+        self.qpaeplot = QPaePlots(nodes=None, datapoints=500, intervall=1)
+        self.qpaeplot.setYRange(0,80)
+        self.verticalLayout.addWidget(self.qpaeplot)
+
+        # TextEdit
+        # self.textEdit = QTextEdit(self.centralwidget)
+        # self.verticalLayout.addWidget(self.textEdit)
+
+        # GPIO.setmode(GPIO.BCM)
+        # GPIO.setwarnings(False)
+
+        # self.gpiowidgets: list[GPIOWidget] = []
+        # for gpio in gpio_list:
+        #     gw = GPIOWidget(gpio, self.centralwidget)
+        #     self.gpiowidgets.append(gw)
+        #     self.verticalLayout.addWidget(gw)
+
+        self.verticalLayout.addStretch()
+
+        # Menubar
+        self.menubar = QMenuBar(self)
+        self.setMenuBar(self.menubar)
+
+        # Menus
+        self.menuFile = QMenu("File", self.menubar)
+        self.menubar.addAction(self.menuFile.menuAction())
+
+        self.menuHelp = QMenu("Help", self.menubar)
+        self.menubar.addAction(self.menuHelp.menuAction())
+
+        self.actionQuit = QAction("Quit", self)
+        self.actionQuit.setStatusTip("Quit application")
+        self.actionQuit.setShortcut("Ctrl+Q")
+        self.actionQuit.triggered.connect(self.exit)
+        self.menuFile.addAction(self.actionQuit)
+
+        self.actionAbout = QAction("About", self)
+        self.actionAbout.setStatusTip("About")
+        self.actionAbout.triggered.connect(lambda: program_info())
+        self.menuHelp.addAction(self.actionAbout)
+
+        self.actionSysInfo = QAction("Sys info")
+        self.actionSysInfo.setStatusTip("System information")
+        self.actionSysInfo.triggered.connect(lambda: board_info())
+        self.menuHelp.addAction(self.actionSysInfo)
+
+        # Statusbar
+        self.statusbar = QStatusBar(self)
+        self.statusbar.setLayoutDirection(Qt.LeftToRight)
+        self.statusbar.setObjectName("statusbar")
+        self.setStatusBar(self.statusbar)
+
+        # self.statusbar.showMessage(
+        #     f"Board: {GPIO.RPI_INFO['TYPE']}  CPU: {GPIO.RPI_INFO['PROCESSOR']} {GPIO.RPI_INFO['RAM']} P1:{GPIO.RPI_INFO['P1_REVISION']}"
+        # )
+
+        # self.statusbar.addPermanentWidget(
+        #     QLabel(f"{GPIO.RPI_INFO['TYPE']}"),
+        #     stretch=0
+        # )
+
+        self.motor = PaeMotor()
+        temperature_node = self.motor.add_node(
+            PaeNode("Temperature", PaeType.Normal, "temp")
+        )
+        deadband_node = self.motor.add_node(
+            PaeNode("Deadband", PaeType.Normal, "dband")
+        )
+        setpoint_node = self.motor.add_node(
+            PaeNode("Setpoint", PaeType.Normal, "setp")
+        )
+        output_node = self.motor.add_node(
+            PaeNode("Output", PaeType.Normal, "outp")
+        )
+        lower_limit_node = self.motor.add_node(
+            PaeNode("Lower limit", PaeType.Normal, "llim")
+        )
+        state_node = self.motor.add_node(
+            PaeNode("State", PaeType.Normal, "state")
+        )
+
+        self.qpaeplot.add_node(temperature_node, pg_color_red)
+        self.qpaeplot.add_node(deadband_node, pg_color_green)
+        self.qpaeplot.add_node(setpoint_node, pg_color_blue)
+        self.qpaeplot.add_node(output_node, pg_color_cyan)
+        self.qpaeplot.add_node(lower_limit_node, pg_color_magenta)
+
+        self.update_timer = QTimer(self)
+        self.update_timer.timeout.connect(self.update)
+        self.update_timer.start(100)
+
+    def update(self) -> None:
+        self.motor.update()
+
+    def exit(self):
+        self.close()
+        # msgBox = QMessageBox()
+        # msgBox.setIcon(QMessageBox.Information)
+        # msgBox.setWindowTitle("Quit")
+        # msgBox.setText("Are you sure you want to quit?")
+        # msgBox.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+        # if msgBox.exec() == QMessageBox.Ok:
+        #     self.close()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        self.exit()
+        return super().closeEvent(event)
+
+
+def main() -> None:
+    logging_format = "[%(levelname)s] %(lineno)-4d %(funcName)-14s : %(message)s"
+    logging.basicConfig(format=logging_format)
+
+    app = QApplication(sys.argv)
+    main_window = MainWindow()
+    main_window.show()
+    sys.exit(app.exec_())
+    parser = argparse.ArgumentParser(
+        prog=App.NAME, description=App.DESCRIPTION, epilog="", add_help=True
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"{App.NAME} {App.VERSION}",
+        help="Print version information",
+    )
+
+    parser.add_argument(
+        "--debug", action="store_true", default=False, help="Print debug messages"
+    )
+
+    args = parser.parse_args()
+
+    if args.debug:
+        logging.basicConfig(format=logging_format, level=logging.DEBUG)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+        sys.exit(0)
+    except KeyboardInterrupt as e:  # Ctrl-C
+        raise e
+    except SystemExit as e:  # sys.exit()
+        raise e
+    except Exception as e:
+        print("ERROR, UNEXPECTED EXCEPTION")
+        print(str(e))
+        traceback.print_exc()
+        os._exit(1)
