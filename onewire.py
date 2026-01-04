@@ -26,6 +26,17 @@ class ds18b20:
     def __str__(self) -> str:
         return f"Device ID: {self.device_id}, Temperature: {self.temperature:.2f} °C"
     
+    @staticmethod
+    def list_devices() -> list:
+        try:
+            devices = os.listdir("/sys/bus/w1/devices/")
+        except FileNotFoundError:
+            logging.debug("1-Wire bus not found.")
+            return []
+
+        device_ids = [ds18b20(dev) for dev in devices if dev.startswith("28-")]
+        return device_ids
+    
         
 def list_devices() -> list:
     try:
@@ -42,6 +53,6 @@ def list_devices() -> list:
 
 if __name__ == "__main__":
     print("1-Wire Devices Found:")
-    for device in list_devices():
+    for device in ds18b20.list_devices():
         device.read_temperature()
         print(device)

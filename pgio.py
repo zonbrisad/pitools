@@ -46,6 +46,7 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QCheckBox,
     QComboBox,
+    QSlider
 )
 from infodialog import InfoDialog
 
@@ -70,7 +71,7 @@ class App:
 
 # Qt main window settings
 win_title = App.NAME
-win_x_size = 420
+win_x_size = 600
 win_y_size = 240
 
 css = """
@@ -78,6 +79,25 @@ css = """
         font-family: Courier New, monospace;
         }
 """
+
+class StyleS:
+    normal = """
+    QLineEdit:enabled {
+    color:Black;
+    }
+    QLineEdit:disabled {
+    color:gray;
+    }
+    """
+    error = """
+    QLineEdit:enabled {
+    color:Red;
+    }
+    QLineEdit:disabled {
+    color:gray;
+    }
+    """
+    win = "border:0"
     
 def board_info() -> None:
     board_info=f"""<center><h2>System information</h2></center>
@@ -176,75 +196,84 @@ gpio_list = [
 
 
 class GPIOWidget(QWidget):
-    def __init__(self, gpio: GPIOX, parent=None):
+    def __init__(self, gpio: GPIOX, main_win=None, parent=None):
         super().__init__()
         
         self.gpio = gpio
         self.gpio_direction = GPIO.IN
+        self.gpio_pwm = None
+        
+        self.main_win = main_win 
         
         self.layout = QHBoxLayout()
         self.layout.setContentsMargins(2, 2, 2, 2)
         # self.layout.setSpacing(2)
         self.setLayout(self.layout)
 
-        self.gpio_enable = QCheckBox()
-        self.gpio_enable.clicked.connect(self.set_enable)
-        self.layout.addWidget(self.gpio_enable)
+        self.gpio_enable_CB = QCheckBox()
+        self.gpio_enable_CB.clicked.connect(self.gpio_enable)
+        self.layout.addWidget(self.gpio_enable_CB)
         
-        self.pin_name = QLabel(gpio.label())
-        self.pin_name.setStyleSheet(css)
-        self.layout.addWidget(self.pin_name)
-        self.layout.addStretch()
+        self.gpio_name_Label = QLabel(gpio.label())
+        self.gpio_name_Label.setStyleSheet(css)
+        self.gpio_name_Label.setMinimumWidth(150)
+        self.layout.addWidget(self.gpio_name_Label)
 
-        self.pin_direction = QComboBox()
-        self.pin_direction.addItem("Input", GPIO.IN)
-        self.pin_direction.addItem("Output", GPIO.OUT)
-        self.layout.addWidget(self.pin_direction)
-        self.pin_direction.activated.connect(self.change_dir)
+        self.gpio_id_mode_CB = QComboBox()
+        self.gpio_id_mode_CB.addItem("In", GPIO.IN)
+        self.gpio_id_mode_CB.addItem("Out", GPIO.OUT)
+        self.gpio_id_mode_CB.addItem("PWM sw", "PWMSW")
+        # self.gpio_mode.addItem("PWM hw", "PWMHW")
+        self.gpio_id_mode_CB.activated.connect(self.gpio_change_mode)
+        self.layout.addWidget(self.gpio_id_mode_CB)
 
-        self.pin_pullup_mode = QComboBox()
-        self.pin_pullup_mode.addItem("Pullup", GPIO.PUD_UP)
-        self.pin_pullup_mode.addItem("Pulldown", GPIO.PUD_DOWN)
-        self.pin_pullup_mode.addItem("None", GPIO.PUD_OFF)
-        self.pin_pullup_mode.activated.connect(self.change_dir)
-        self.layout.addWidget(self.pin_pullup_mode)
+        self.gpio_pullup_mode_CB = QComboBox()
+        self.gpio_pullup_mode_CB.addItem("Pullup", GPIO.PUD_UP)
+        self.gpio_pullup_mode_CB.addItem("Pulldown", GPIO.PUD_DOWN)
+        self.gpio_pullup_mode_CB.addItem("None", GPIO.PUD_OFF)
+        self.gpio_pullup_mode_CB.activated.connect(self.gpio_change_mode)
+        self.layout.addWidget(self.gpio_pullup_mode_CB)
 
-        self.pin_toggle = QPushButton("Toggle")
-        self.pin_toggle.setCheckable(True)
-        self.layout.addWidget(self.pin_toggle)
-        self.pin_toggle.clicked.connect(self.set_output)
+        self.gpio_togglePB = QPushButton("Toggle")
+        self.gpio_togglePB.setCheckable(True)
+        self.gpio_togglePB.setMinimumWidth(100)
+        self.gpio_togglePB.setMaximumWidth(100)
+        self.layout.addWidget(self.gpio_togglePB)
+        self.gpio_togglePB.clicked.connect(self.gpio_toggle)
 
-        self.pin_state = QLabel()
-        self.pin_state.setStyleSheet("font-family: monospace;")
-        self.layout.addWidget(self.pin_state)
+        self.pwm_slider = QSlider(Qt.Horizontal)
+        self.pwm_slider.setMinimumWidth(100)
+        self.pwm_slider.setMaximumWidth(100)
+        self.pwm_slider.setMinimum(0)
+        self.pwm_slider.setMaximum(100)
+        self.pwm_slider.setValue(25)
+        self.pwm_slider.valueChanged.connect(self.pwm_slider_changed)
         
-        self.update_state()
+        self.layout.addWidget(self.pwm_slider)
         
-    def update_gpio(self) -> None:
-        if self.pin_is_enabled() is True:
-            xin = GPIO.input(self.gpio.id_cpu)
-            self.pin_state.setText(f" {xin} ")
+        self.gpio_state = QLabel()
+        self.gpio_state.setMinimumWidth(50)
+        self.gpio_state.setStyleSheet("font-family: monospace;")
+        self.layout.addWidget(self.gpio_state)
+        # self.layout.addStretch()
+        
+        self.update_widgets()
+        
+    def gpio_enable(self) -> None:
+        if self.gpio_is_enabled() is not True:
+            GPIO.cleanup(self.gpio.id_cpu)
+            self.gpio_pwm = None
+            logging.debug(f"Releasing pin: {self.gpio.id_cpu}")
         else:
-            self.pin_state.setText("N/A")
+            self.gpio_setup(self.gpio_id_mode_CB.currentData(), self.gpio_pullup_mode_CB.currentData())
+            
+        self.update_widgets()
         
-    def update_state(self) -> None:
-        if self.pin_is_enabled() is False:
-            self.pin_direction.setEnabled(False)
-            self.pin_pullup_mode.setEnabled(False)
-            self.pin_toggle.setEnabled(False)
-            return
-        
-        if self.gpio_direction == GPIO.IN:
-            self.pin_direction.setEnabled(True)
-            self.pin_pullup_mode.setEnabled(True)
-            self.pin_toggle.setEnabled(False)
-            return
-        
-        self.pin_direction.setEnabled(True)
-        self.pin_pullup_mode.setEnabled(True)
-        self.pin_toggle.setEnabled(True)
-        
-    def set_output(self) -> None:
+    def gpio_change_mode(self) -> None:
+        self.gpio_setup(self.gpio_id_mode_CB.currentData(), self.gpio_pullup_mode_CB.currentData())
+        self.update_widgets()
+    
+    def gpio_toggle(self) -> None:
         if self.gpio_direction == GPIO.IN:
             return
         
@@ -253,38 +282,88 @@ class GPIOWidget(QWidget):
             GPIO.output(self.gpio.id_cpu, GPIO.HIGH)
         else: 
             GPIO.output(self.gpio.id_cpu, GPIO.LOW)
+            
+    def pwm_slider_changed(self) -> None:       
+        if self.gpio_direction != "PWMSW":
+            return
+        
+        duty_cycle = self.pwm_slider.value()
+        self.gpio_pwm.ChangeDutyCycle(duty_cycle)
+        
+        self.update_widgets()     
          
     def gpio_setup(self, direction, pull_upp) -> None:
-        if self.pin_is_enabled() is False:
+        if self.gpio_is_enabled() is False:
             return
-            
+        
+        if self.gpio_pwm is not None:
+            self.gpio_pwm.stop()
+            self.gpio_pwm = None
+                
         try:
+            GPIO.cleanup(self.gpio.id_cpu)
             if direction == GPIO.IN:
-                self.pin = GPIO.setup(self.gpio.id_cpu, direction, pull_up_down=pull_upp)
-            else:
-                self.pin = GPIO.setup(self.gpio.id_cpu, direction)
+                self.pin = GPIO.setup(self.gpio.id_cpu, GPIO.IN, pull_up_down=pull_upp)
+            elif direction == GPIO.OUT:
+                self.pin = GPIO.setup(self.gpio.id_cpu, GPIO.OUT)
+            elif direction == "PWMSW":
+                self.pin = GPIO.setup(self.gpio.id_cpu, GPIO.OUT)
+                self.gpio_pwm = GPIO.PWM(self.gpio.id_cpu, 0.5)  # 0.1 kHz
+                self.gpio_pwm.start(self.pwm_slider.value())
         except: 
             logging.error(f"Pin: {self.gpio.id_cpu} busy")
-            self.gpio_enable.setChecked(False)
+            self.main_win.message_error(f"Pin: {self.gpio.id_cpu} busy")
+            self.gpio_enable_CB.setChecked(False)
             return
         
         self.gpio_direction = direction
     
-    def pin_is_enabled(self) -> bool:
-        return self.gpio_enable.isChecked()
-            
-    def change_dir(self) -> None:
-        self.gpio_setup(self.pin_direction.currentData(), self.pin_pullup_mode.currentData())
-        self.update_state()
+    def gpio_is_enabled(self) -> bool:
+        return self.gpio_enable_CB.isChecked()
     
-    def set_enable(self) -> None:
-        if self.pin_is_enabled() is not True:
-            GPIO.cleanup(self.gpio.id_cpu)
-            logging.debug(f"Releasing pin: {self.gpio.id_cpu}")
-        else:
-            self.gpio_setup(self.pin_direction.currentData(), self.pin_pullup_mode.currentData())
+    def update_gpio(self) -> None:        
+        if self.gpio_is_enabled() is False:
+            self.gpio_state.setText("<center>N/A</center>")
+            # self.gpio_state.setText("N/A")
+            return
+
+        if self.gpio_direction == "PWMSW":
+            self.gpio_state.setText(f"<center>{self.pwm_slider.value():>3} %</center>")
+            return
+
+        xin = GPIO.input(self.gpio.id_cpu)
+        self.gpio_state.setText(f"<center>{xin}</center>")
+        
+    def update_widgets(self) -> None:
+        if self.gpio_is_enabled() is False:
+            self.gpio_id_mode_CB.setEnabled(False)
+            self.gpio_pullup_mode_CB.setEnabled(False)
+            self.gpio_togglePB.setEnabled(False)
+            self.gpio_togglePB.setVisible(True)
+            self.pwm_slider.setEnabled(False)
+            self.pwm_slider.setVisible(False)
+            return
+        
+        if self.gpio_direction == GPIO.IN:
+            self.gpio_pullup_mode_CB.setEnabled(True)
+            self.gpio_togglePB.setEnabled(False)
+            self.gpio_togglePB.setVisible(True)
+            self.pwm_slider.setEnabled(False)
+            self.pwm_slider.setVisible(False)
+        elif self.gpio_direction == GPIO.OUT:
+            self.gpio_pullup_mode_CB.setEnabled(False)
+            self.gpio_togglePB.setEnabled(True)
+            self.gpio_togglePB.setVisible(True)
+            self.pwm_slider.setEnabled(False)
+            self.pwm_slider.setVisible(False)
+        elif self.gpio_direction == "PWMSW":
+            self.gpio_pullup_mode_CB.setEnabled(False)
+            self.gpio_togglePB.setEnabled(False)
+            self.gpio_togglePB.setVisible(False)
+            self.pwm_slider.setEnabled(True)
+            self.pwm_slider.setVisible(True)
             
-        self.update_state()
+        self.gpio_id_mode_CB.setEnabled(True)
 
 
 class MainWindow(QMainWindow):
@@ -299,19 +378,17 @@ class MainWindow(QMainWindow):
         self.centralwidget = QWidget(self)
         self.setCentralWidget(self.centralwidget)
         self.verticalLayout = QVBoxLayout(self.centralwidget)
-        self.verticalLayout.setSpacing(2)
-        self.verticalLayout.setContentsMargins(2, 2, 2, 2)
-
-        # TextEdit
-        # self.textEdit = QTextEdit(self.centralwidget)
-        # self.verticalLayout.addWidget(self.textEdit)
+        self.verticalLayout.setSpacing(0)
+        self.verticalLayout.setContentsMargins(0, 0, 0, 0)
         
         GPIO.setmode(GPIO.BCM)
         GPIO.setwarnings(False)
         
         self.gpiowidgets: list[GPIOWidget] = []
         for gpio in gpio_list:
-            gw = GPIOWidget(gpio, self.centralwidget)
+            gw = GPIOWidget(gpio, 
+                            main_win=self, 
+                            parent=self.centralwidget)
             self.gpiowidgets.append(gw)
             self.verticalLayout.addWidget(gw)
             
@@ -347,16 +424,20 @@ class MainWindow(QMainWindow):
         # Statusbar
         self.statusbar = QStatusBar(self)
         self.statusbar.setLayoutDirection(Qt.LeftToRight)
-        self.statusbar.setObjectName("statusbar")
+        self.statusbar.setStyleSheet(StyleS.normal)
         self.setStatusBar(self.statusbar)
+        self.message_error("Error messages shown here")
 
         # self.statusbar.showMessage(
         #     f"Board: {GPIO.RPI_INFO['TYPE']}  CPU: {GPIO.RPI_INFO['PROCESSOR']} {GPIO.RPI_INFO['RAM']} P1:{GPIO.RPI_INFO['P1_REVISION']}"
         # )
         
+        self.pi_type_label = QLabel(f"{GPIO.RPI_INFO['TYPE']}")
+        self.pi_type_label.setStyleSheet("color:Black;")
+        
         self.statusbar.addPermanentWidget(
-            QLabel(f"{GPIO.RPI_INFO['TYPE']}"),
-            stretch=0
+            self.pi_type_label,
+            stretch=0,
         )
         
         self.update_timer = QTimer(self)
@@ -366,17 +447,21 @@ class MainWindow(QMainWindow):
     def update(self) -> None:
         for gw in self.gpiowidgets:
             gw.update_gpio()
-            pass
+        
+    def message_error(self, msg: str) -> None:
+        self.statusbar.setStyleSheet("color:Red;")
+        self.statusbar.showMessage(msg, 5000)
+        logging.debug(msg)
+        
 
     def exit(self):
+        for gw in self.gpiowidgets:
+            try:
+                GPIO.cleanup(self.gpio.id_cpu)
+            except:            
+                pass
+
         self.close()
-        # msgBox = QMessageBox()
-        # msgBox.setIcon(QMessageBox.Information)
-        # msgBox.setWindowTitle("Quit")
-        # msgBox.setText("Are you sure you want to quit?")
-        # msgBox.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
-        # if msgBox.exec() == QMessageBox.Ok:
-        #     self.close()
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self.exit()

@@ -47,9 +47,11 @@ from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
 )
+
 from infodialog import InfoDialog
 from pae import PaeNode, PaeType, PaeMotor
-from qpaewidgets import QPaePlot, QPaePlots, pg_color_red, pg_color_green, pg_color_blue, pg_color_white, pg_color_yellow, pg_color_cyan, pg_color_magenta
+from qpaewidgets import QPaeMonitor, QPaePlot, QPaePlots, pg_color_red, pg_color_green, pg_color_blue, pg_color_white, pg_color_yellow, pg_color_cyan, pg_color_magenta, pg_color_orange
+from onewire import ds18b20
 
 
 # try:
@@ -60,9 +62,9 @@ from qpaewidgets import QPaePlot, QPaePlots, pg_color_red, pg_color_green, pg_co
 
 
 class App:
-    NAME = "pgio"
+    NAME = "pthermostat"
     VERSION = "0.01"
-    DESCRIPTION = "simple gui for handling raspberry pi gpio ports."
+    DESCRIPTION = "Simple thermostat for Raspberry Pi using GPIO ports and DS18B20 temperature sensors"
     LICENSE = ""
     AUTHOR = "Peter Malmberg"
     EMAIL = "<peter.malmberg@gmail.com>"
@@ -142,32 +144,28 @@ class MainWindow(QMainWindow):
         self.centralwidget = QWidget(self)
         self.setCentralWidget(self.centralwidget)
 
-        self.verticalLayout = QVBoxLayout(self.centralwidget)
-        self.verticalLayout.setSpacing(2)
-        self.verticalLayout.setContentsMargins(2, 2, 2, 2)
+        self.main_layout = QVBoxLayout(self.centralwidget)
+        self.main_layout.setSpacing(2)
+        self.main_layout.setContentsMargins(2, 2, 2, 2)
 
         self.start_button = QPushButton("Start", self.centralwidget)
         self.start_button.setMinimumHeight(45)
-        self.verticalLayout.addWidget(self.start_button)
+        self.start_button.clicked.connect(self.start_thermostat)    
+        self.main_layout.addWidget(self.start_button)
 
         self.thermal_sensors = QComboBox(self.centralwidget)
-        #self.verticalLayout.addWidget(self.thermal_sensors)
-
+        self.thermal_sensors.activated.connect(self.select_sensor)
         self.heater_output = QComboBox(self.centralwidget)
-        #self.verticalLayout.addWidget(self.heater_output)
 
         self.form_layout = QFormLayout(self.centralwidget)
         self.form_layout.addRow("Thermal sensor:", self.thermal_sensors)
         self.form_layout.addRow("Heater output:", self.heater_output)
-        self.verticalLayout.addLayout(self.form_layout)
+
+        self.main_layout.addLayout(self.form_layout)
 
         self.qpaeplot = QPaePlots(nodes=None, datapoints=500, intervall=1)
-        self.qpaeplot.setYRange(0,80)
-        self.verticalLayout.addWidget(self.qpaeplot)
-
-        # TextEdit
-        # self.textEdit = QTextEdit(self.centralwidget)
-        # self.verticalLayout.addWidget(self.textEdit)
+        self.qpaeplot.setYRange(10,65)
+        self.main_layout.addWidget(self.qpaeplot)
 
         # GPIO.setmode(GPIO.BCM)
         # GPIO.setwarnings(False)
@@ -178,7 +176,7 @@ class MainWindow(QMainWindow):
         #     self.gpiowidgets.append(gw)
         #     self.verticalLayout.addWidget(gw)
 
-        self.verticalLayout.addStretch()
+        self.main_layout.addStretch()
 
         # Menubar
         self.menubar = QMenuBar(self)
@@ -223,47 +221,88 @@ class MainWindow(QMainWindow):
         # )
 
         self.motor = PaeMotor()
-        temperature_node = self.motor.add_node(
-            PaeNode("Temperature", PaeType.Normal, "temp")
+        self.temperature_node = self.motor.add_node(
+            PaeNode(name="Temperature", type=PaeType.Normal, id="temp")
         )
-        deadband_node = self.motor.add_node(
-            PaeNode("Deadband", PaeType.Normal, "dband")
+        self.deadband_node = self.motor.add_node(
+            PaeNode(name="Deadband", type=PaeType.Normal, id="dband")
         )
-        setpoint_node = self.motor.add_node(
-            PaeNode("Setpoint", PaeType.Normal, "setp")
+        self.setpoint_node = self.motor.add_node(
+            PaeNode(name="Setpoint", type=PaeType.Normal, id="setp")
         )
-        output_node = self.motor.add_node(
-            PaeNode("Output", PaeType.Normal, "outp")
+        self.output_node = self.motor.add_node(
+            PaeNode(name="Output", type=PaeType.Normal, id="outp")
         )
-        lower_limit_node = self.motor.add_node(
-            PaeNode("Lower limit", PaeType.Normal, "llim")
+        self.lower_limit_node = self.motor.add_node(
+            PaeNode(name="Lower limit", type=PaeType.Subtract, id="llim", source=self.setpoint_node, term=self.deadband_node)
         )
-        state_node = self.motor.add_node(
-            PaeNode("State", PaeType.Normal, "state")
+        self.state_node = self.motor.add_node(
+            PaeNode(name="State", type=PaeType.Normal, id="state")
         )
 
-        self.qpaeplot.add_node(temperature_node, pg_color_red)
-        self.qpaeplot.add_node(deadband_node, pg_color_green)
-        self.qpaeplot.add_node(setpoint_node, pg_color_blue)
-        self.qpaeplot.add_node(output_node, pg_color_cyan)
-        self.qpaeplot.add_node(lower_limit_node, pg_color_magenta)
+        self.qpaeplot.add_node(self.temperature_node, pg_color_yellow)
+        #self.qpaeplot.add_node(self.deadband_node, pg_color_green)
+        self.qpaeplot.add_node(self.setpoint_node, pg_color_red)
+        self.qpaeplot.add_node(self.output_node, pg_color_cyan)
+        self.qpaeplot.add_node(self.lower_limit_node, pg_color_orange)
+        
+        self.setpoint_node.set_value(30.0)
+        self.deadband_node.set_value(3)
+        
+        self.update_temperature_sensors()
+        self.select_sensor()
+
+        self.monitor = None
 
         self.update_timer = QTimer(self)
         self.update_timer.timeout.connect(self.update)
-        self.update_timer.start(100)
+        self.update_timer.start(1000)
+
+    def update_temperature_sensors(self) -> None:
+        ds18b20_devices = ds18b20.list_devices()
+        self.thermal_sensors.clear()
+        for device in ds18b20_devices:
+            self.thermal_sensors.addItem(f"{device.device_id} {device.read_temperature():.2f} °C", device)
+            
+    def select_sensor(self) -> None:    
+        current_index = self.thermal_sensors.currentIndex()
+        device: ds18b20 = self.thermal_sensors.itemData(current_index)
+        self.temperature_sensor = device
+        logging.debug(f"Selected sensor: {device.device_id}")
+
+    def start_thermostat(self) -> None:
+        #self.temperature_device = self.thermal_sensors.currentData()
+        logging.debug("Starting thermostat...")
+        # Implement thermostat start logic here
+        state = self.state_node.get_value()
+        if state == 1:
+            state = 0
+        else:
+            state = 1
+        self.state_node.set_value(state)
+        
+    def update_ui(self) -> None:
+        state = self.state_node.get_value()
+        
+        pass
 
     def update(self) -> None:
+        temp = self.temperature_sensor.read_temperature()
+        self.temperature_node.set_value(temp)
+        
         self.motor.update()
+        self.qpaeplot.update()
+        
+        if self.monitor is None:
+            self.monitor = QPaeMonitor.monitor(self.motor)
+        else:
+            self.monitor.update()
 
-    def exit(self):
+    def exit(self):        
+        if self.monitor is not None:
+            self.monitor.close()
+            
         self.close()
-        # msgBox = QMessageBox()
-        # msgBox.setIcon(QMessageBox.Information)
-        # msgBox.setWindowTitle("Quit")
-        # msgBox.setText("Are you sure you want to quit?")
-        # msgBox.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
-        # if msgBox.exec() == QMessageBox.Ok:
-        #     self.close()
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self.exit()
