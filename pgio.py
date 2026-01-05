@@ -46,7 +46,8 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QCheckBox,
     QComboBox,
-    QSlider
+    QSlider,
+    QLineEdit
 )
 from infodialog import InfoDialog
 
@@ -206,7 +207,7 @@ class GPIOWidget(QWidget):
         self.main_win = main_win 
         
         self.layout = QHBoxLayout()
-        self.layout.setContentsMargins(2, 2, 2, 2)
+        self.layout.setContentsMargins(1, 1, 1, 1)
         # self.layout.setSpacing(2)
         self.setLayout(self.layout)
 
@@ -214,10 +215,10 @@ class GPIOWidget(QWidget):
         self.gpio_enable_CB.clicked.connect(self.gpio_enable)
         self.layout.addWidget(self.gpio_enable_CB)
         
-        self.gpio_name_Label = QLabel(gpio.label())
-        self.gpio_name_Label.setStyleSheet(css)
-        self.gpio_name_Label.setMinimumWidth(150)
-        self.layout.addWidget(self.gpio_name_Label)
+        self.gpio_name_LB = QLabel(gpio.label())
+        self.gpio_name_LB.setStyleSheet(css)
+        self.gpio_name_LB.setMinimumWidth(130)
+        self.layout.addWidget(self.gpio_name_LB)
 
         self.gpio_id_mode_CB = QComboBox()
         self.gpio_id_mode_CB.addItem("In", GPIO.IN)
@@ -234,28 +235,36 @@ class GPIOWidget(QWidget):
         self.gpio_pullup_mode_CB.activated.connect(self.gpio_change_mode)
         self.layout.addWidget(self.gpio_pullup_mode_CB)
 
-        self.gpio_togglePB = QPushButton("Toggle")
-        self.gpio_togglePB.setCheckable(True)
-        self.gpio_togglePB.setMinimumWidth(100)
-        self.gpio_togglePB.setMaximumWidth(100)
-        self.layout.addWidget(self.gpio_togglePB)
-        self.gpio_togglePB.clicked.connect(self.gpio_toggle)
+        self.gpio_toggle_PB = QPushButton("Toggle")
+        self.gpio_toggle_PB.setCheckable(True)
+        self.gpio_toggle_PB.setMinimumWidth(146)
+        self.gpio_toggle_PB.setMaximumWidth(146)
+        self.gpio_toggle_PB.setToolTip("Toggle output high/low")
+        self.layout.addWidget(self.gpio_toggle_PB)
+        self.gpio_toggle_PB.clicked.connect(self.gpio_toggle)
 
-        self.pwm_slider = QSlider(Qt.Horizontal)
-        self.pwm_slider.setMinimumWidth(100)
-        self.pwm_slider.setMaximumWidth(100)
-        self.pwm_slider.setMinimum(0)
-        self.pwm_slider.setMaximum(100)
-        self.pwm_slider.setValue(25)
-        self.pwm_slider.valueChanged.connect(self.pwm_slider_changed)
+        self.freq_LE = QLineEdit("1000")
+        self.freq_LE.setMinimumWidth(40)
+        self.freq_LE.setMaximumWidth(40)
+        self.freq_LE.textChanged.connect(self.freq_LE_changed)
+        self.freq_LE.setToolTip("PWM frequency in Hz")
+        self.layout.addWidget(self.freq_LE)
         
-        self.layout.addWidget(self.pwm_slider)
+        self.pwm_SL = QSlider(Qt.Horizontal)
+        self.pwm_SL.setMinimumWidth(100)
+        self.pwm_SL.setMaximumWidth(100)
+        self.pwm_SL.setMinimum(0)
+        self.pwm_SL.setMaximum(100)
+        self.pwm_SL.setValue(25)
+        self.pwm_SL.valueChanged.connect(self.pwm_slider_changed)
+        self.pwm_SL.setToolTip("PWM duty cycle %")
+        self.layout.addWidget(self.pwm_SL)
         
-        self.gpio_state = QLabel()
-        self.gpio_state.setMinimumWidth(50)
-        self.gpio_state.setStyleSheet("font-family: monospace;")
-        self.layout.addWidget(self.gpio_state)
-        # self.layout.addStretch()
+        self.gpio_state_LB = QLabel()
+        self.gpio_state_LB.setMinimumWidth(50)
+        self.gpio_state_LB.setStyleSheet("font-family: monospace;")
+        self.layout.addWidget(self.gpio_state_LB)
+        self.layout.addStretch()
         
         self.update_widgets()
         
@@ -283,11 +292,26 @@ class GPIOWidget(QWidget):
         else: 
             GPIO.output(self.gpio.id_cpu, GPIO.LOW)
             
+    def freq_LE_changed(self) -> None:
+        if self.gpio_direction != "PWMSW":
+            return
+        
+        print(f"freq_LE_changed {self.freq_LE.text()}")
+        try:
+            freq = int(self.freq_LE.text())
+            if freq < 1:
+                freq = 1
+            self.gpio_pwm.ChangeFrequency(freq)
+        except ValueError:
+            pass
+        
+        self.update_widgets()
+        
     def pwm_slider_changed(self) -> None:       
         if self.gpio_direction != "PWMSW":
             return
         
-        duty_cycle = self.pwm_slider.value()
+        duty_cycle = self.pwm_SL.value()
         self.gpio_pwm.ChangeDutyCycle(duty_cycle)
         
         self.update_widgets()     
@@ -308,8 +332,8 @@ class GPIOWidget(QWidget):
                 self.pin = GPIO.setup(self.gpio.id_cpu, GPIO.OUT)
             elif direction == "PWMSW":
                 self.pin = GPIO.setup(self.gpio.id_cpu, GPIO.OUT)
-                self.gpio_pwm = GPIO.PWM(self.gpio.id_cpu, 0.5)  # 0.1 kHz
-                self.gpio_pwm.start(self.pwm_slider.value())
+                self.gpio_pwm = GPIO.PWM(self.gpio.id_cpu, 1000)  # 0.1 kHz
+                self.gpio_pwm.start(self.pwm_SL.value())
         except: 
             logging.error(f"Pin: {self.gpio.id_cpu} busy")
             self.main_win.message_error(f"Pin: {self.gpio.id_cpu} busy")
@@ -323,45 +347,50 @@ class GPIOWidget(QWidget):
     
     def update_gpio(self) -> None:        
         if self.gpio_is_enabled() is False:
-            self.gpio_state.setText("<center>N/A</center>")
+            self.gpio_state_LB.setText("<center>N/A</center>")
             # self.gpio_state.setText("N/A")
             return
 
         if self.gpio_direction == "PWMSW":
-            self.gpio_state.setText(f"<center>{self.pwm_slider.value():>3} %</center>")
+            self.gpio_state_LB.setText(f"{self.freq_LE.text():>4} Hz {self.pwm_SL.value():>3} %")
+            # self.gpio_state_LB.setText(f"<center>{self.freq_LE.text():>4} Hz    {self.pwm_SL.value():<3} %</center>")
             return
 
         xin = GPIO.input(self.gpio.id_cpu)
-        self.gpio_state.setText(f"<center>{xin}</center>")
+        self.gpio_state_LB.setText(f"<center>{xin}</center>")
         
     def update_widgets(self) -> None:
         if self.gpio_is_enabled() is False:
             self.gpio_id_mode_CB.setEnabled(False)
             self.gpio_pullup_mode_CB.setEnabled(False)
-            self.gpio_togglePB.setEnabled(False)
-            self.gpio_togglePB.setVisible(True)
-            self.pwm_slider.setEnabled(False)
-            self.pwm_slider.setVisible(False)
+            self.gpio_toggle_PB.setEnabled(False)
+            self.gpio_toggle_PB.setVisible(True)
+            self.pwm_SL.setEnabled(False)
+            self.pwm_SL.setVisible(False)
+            self.freq_LE.setVisible(False)
             return
         
         if self.gpio_direction == GPIO.IN:
             self.gpio_pullup_mode_CB.setEnabled(True)
-            self.gpio_togglePB.setEnabled(False)
-            self.gpio_togglePB.setVisible(True)
-            self.pwm_slider.setEnabled(False)
-            self.pwm_slider.setVisible(False)
+            self.gpio_toggle_PB.setEnabled(False)
+            self.gpio_toggle_PB.setVisible(True)
+            self.pwm_SL.setEnabled(False)
+            self.pwm_SL.setVisible(False)
+            self.freq_LE.setVisible(False)
         elif self.gpio_direction == GPIO.OUT:
             self.gpio_pullup_mode_CB.setEnabled(False)
-            self.gpio_togglePB.setEnabled(True)
-            self.gpio_togglePB.setVisible(True)
-            self.pwm_slider.setEnabled(False)
-            self.pwm_slider.setVisible(False)
+            self.gpio_toggle_PB.setEnabled(True)
+            self.gpio_toggle_PB.setVisible(True)
+            self.pwm_SL.setEnabled(False)
+            self.pwm_SL.setVisible(False)
+            self.freq_LE.setVisible(False)
         elif self.gpio_direction == "PWMSW":
             self.gpio_pullup_mode_CB.setEnabled(False)
-            self.gpio_togglePB.setEnabled(False)
-            self.gpio_togglePB.setVisible(False)
-            self.pwm_slider.setEnabled(True)
-            self.pwm_slider.setVisible(True)
+            self.gpio_toggle_PB.setEnabled(False)
+            self.gpio_toggle_PB.setVisible(False)
+            self.pwm_SL.setEnabled(True)
+            self.pwm_SL.setVisible(True)
+            self.freq_LE.setVisible(True)
             
         self.gpio_id_mode_CB.setEnabled(True)
 
@@ -379,7 +408,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.centralwidget)
         self.verticalLayout = QVBoxLayout(self.centralwidget)
         self.verticalLayout.setSpacing(0)
-        self.verticalLayout.setContentsMargins(0, 0, 0, 0)
+        self.verticalLayout.setContentsMargins(2, 2, 2, 2)
         
         GPIO.setmode(GPIO.BCM)
         GPIO.setwarnings(False)
