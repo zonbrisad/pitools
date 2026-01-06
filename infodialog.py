@@ -2,6 +2,7 @@
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
+    QApplication,
     QDialog,
     QVBoxLayout,
     QTextEdit,
@@ -9,16 +10,15 @@ from PyQt5.QtWidgets import (
 )
 
 class InfoDialog(QDialog):
-    # def __init__(self, parent=None):
     def __init__(self, text: str, title: str="", x: int=400, y: int=300, parent=None):
         super(InfoDialog, self).__init__(parent)
 
         self.setWindowTitle(title)
         self.setWindowModality(Qt.ApplicationModal)
         self.resize(x,y)
-        
+        self.setContentsMargins(1,1,1,1)
         self.verticalLayout = QVBoxLayout(self)
-        self.verticalLayout.setSpacing(2)
+        self.verticalLayout.setSpacing(5)
         self.setLayout(self.verticalLayout)
 
         # TextEdit
@@ -40,3 +40,13 @@ class InfoDialog(QDialog):
         dialog = InfoDialog(text, title=title,x=x, y=y, parent=parent)
         result = dialog.exec_()
         return result == QDialog.Accepted
+    
+    
+    
+    if __name__ == "__main__":
+        import sys
+        app = QApplication(sys.argv)
+        #InfoDialog.show("<h1>This is a test</h1><p>Hello World!</p>", title="Info Dialog Test", x=500, y=400)
+    
+        dialog = InfoDialog("<h1>This is a test</h1><p>Hello World!</p>", title="Info Dialog Test", x=500, y=400)
+        dialog.exec_()

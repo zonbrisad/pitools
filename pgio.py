@@ -26,7 +26,7 @@ import logging
 import argparse
 from dataclasses import dataclass, field
 from PyQt5.QtCore import Qt, QTimer, QSettings, QIODevice
-from PyQt5.QtGui import QIcon, QCloseEvent
+from PyQt5.QtGui import QIcon, QCloseEvent, QIntValidator
 from PyQt5.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -47,9 +47,10 @@ from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
     QSlider,
-    QLineEdit
+    QLineEdit,
 )
 from infodialog import InfoDialog
+from rp_misc import RpGpio, rp_gpio_list
 
 try:
     import RPi.GPIO as GPIO
@@ -119,6 +120,9 @@ def board_info() -> None:
 <tr>
 <td><b>P1 Revision:</b></td><td>{GPIO.RPI_INFO['P1_REVISION']}</td>
 </tr>
+<tr>
+<td><b>GPIO Version:</b></td><td>{GPIO.VERSION}</td>
+</tr>
 </table>
 </center>
 """
@@ -148,56 +152,9 @@ def program_info() -> None:
     InfoDialog.show(about_html, title="About")
     
 
-@dataclass
-class GPIOX:
-    id_p1: int = 0
-    id_cpu: int = 0
-    alternative: str = ""
-
-    def __str__(self):
-        if self.alternative == "":
-            return f"{self.id_p1:02d} GPIO{self.id_cpu:2d}"
-        return f"{self.id_p1:02d} GPIO{self.id_cpu:12d} ({self.alternative})"
-
-    def label(self) -> str:
-        return f'<pre><span style="color:Blue">{self.id_p1:02d}</span> <span style="color:Green">GPIO{self.id_cpu:2d}</span> <span style="color:Purple">{self.alternative}</span></pre>'
-
-    def __post_init__(self):
-        pass
-
-
-gpio_list = [
-    GPIOX(3, 2, "SDA"),
-    GPIOX(5, 3, "SCL"),
-    GPIOX(7, 3, "GPCLK"),
-    GPIOX(8, 14, "TXD"),
-    GPIOX(10, 15, "RXD"),
-    GPIOX(11, 17, ""),
-    GPIOX(12, 18, "PCM_CLK"),
-    GPIOX(13, 27, ""),
-    GPIOX(15, 22, ""),
-    GPIOX(16, 23, ""),
-    GPIOX(18, 24, ""),
-    GPIOX(19, 10, "SPI_MOSI"),
-    GPIOX(21, 9, "SPI_MISO"),
-    GPIOX(22, 25, ""),
-    GPIOX(23, 11, "SPI_SCLK"),
-    GPIOX(24, 8, "SPI_CE0"),
-    GPIOX(26, 7, "SPI_CE1"),
-    GPIOX(29, 5, ""),
-    GPIOX(31, 6, ""),
-    GPIOX(32, 12, ""),
-    GPIOX(33, 13, ""),
-    GPIOX(35, 19, ""),
-    GPIOX(36, 16, ""),
-    GPIOX(37, 26, ""),
-    GPIOX(38, 20, ""),
-    GPIOX(40, 21, ""),
-]
-
 
 class GPIOWidget(QWidget):
-    def __init__(self, gpio: GPIOX, main_win=None, parent=None):
+    def __init__(self, gpio: RpGpio, main_win=None, parent=None):
         super().__init__()
         
         self.gpio = gpio
@@ -208,7 +165,7 @@ class GPIOWidget(QWidget):
         
         self.layout = QHBoxLayout()
         self.layout.setContentsMargins(1, 1, 1, 1)
-        # self.layout.setSpacing(2)
+        self.layout.setSpacing(2)
         self.setLayout(self.layout)
 
         self.gpio_enable_CB = QCheckBox()
@@ -248,6 +205,7 @@ class GPIOWidget(QWidget):
         self.freq_LE.setMaximumWidth(40)
         self.freq_LE.textChanged.connect(self.freq_LE_changed)
         self.freq_LE.setToolTip("PWM frequency in Hz")
+        self.freq_LE.setValidator(QIntValidator(0, 1000, self))
         self.layout.addWidget(self.freq_LE)
         
         self.pwm_SL = QSlider(Qt.Horizontal)
@@ -414,7 +372,7 @@ class MainWindow(QMainWindow):
         GPIO.setwarnings(False)
         
         self.gpiowidgets: list[GPIOWidget] = []
-        for gpio in gpio_list:
+        for gpio in rp_gpio_list:
             gw = GPIOWidget(gpio, 
                             main_win=self, 
                             parent=self.centralwidget)
