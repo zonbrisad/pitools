@@ -8,8 +8,15 @@ Date: 2023-10-06
 License: MIT
 """
 
+import logging
 from dataclasses import dataclass
 
+try:
+    import RPi.GPIO as GPIO
+except ImportError:
+    print("RPi.GPIO not available")
+    exit(1)
+    
 @dataclass
 class RpGpio:
     id_p1: int = 0
@@ -18,15 +25,36 @@ class RpGpio:
 
     def __str__(self):
         if self.alternative == "":
-            return f"{self.id_p1:02d} GPIO{self.id_cpu:2d}"
-        return f"{self.id_p1:02d} GPIO{self.id_cpu:12d} ({self.alternative})"
+            return f"{self.id_p1:02d} GPIO{self.id_cpu:<2}"
+        return f"{self.id_p1:02d} GPIO{self.id_cpu:<2} ({self.alternative})"
 
     def label(self) -> str:
         return f'<pre><span style="color:Blue">{self.id_p1:02d}</span> <span style="color:Green">GPIO{self.id_cpu:2d}</span> <span style="color:Purple">{self.alternative}</span></pre>'
 
-    def __post_init__(self):
-        pass
+    def name(self) -> str:
+        return f"Pin {self.id_p1:2}: GPIO{self.id_cpu}"
 
+    def is_busy(self) -> bool:
+        try:
+            self.setup(GPIO.IN)
+        except:
+            #GPIO.cleanup(self.id_cpu)
+            #logging.error(f"Pin: {self.id_cpu} busy")
+            return True
+        
+        self.cleanup()
+        return False    
+    
+    def input(self) -> int:
+        return GPIO.input(self.id_cpu)
+    
+    def setup(self, direction) -> None:
+        GPIO.setup(self.id_cpu, GPIO.IN)
+    
+    def cleanup(self) -> None:
+        GPIO.cleanup(self.id_cpu)
+        
+    
 
 rp_gpio_list = [
     RpGpio(3, 2, "SDA"),
@@ -56,3 +84,12 @@ rp_gpio_list = [
     RpGpio(38, 20, ""),
     RpGpio(40, 21, ""),
 ]
+
+
+GPIO.setmode(GPIO.BCM)
+GPIO.setwarnings(False)
+
+if __name__ == "__main__":
+    for gpio in rp_gpio_list:
+        print(f"{str(gpio):20} {gpio.is_busy()}")
+        

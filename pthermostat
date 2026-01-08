@@ -52,7 +52,7 @@ from infodialog import InfoDialog
 from pae import PaeNode, PaeType, PaeMotor
 from qpaewidgets import QPaeMonitor, QPaePlot, QPaePlots, pg_color_red, pg_color_green, pg_color_blue, pg_color_white, pg_color_yellow, pg_color_cyan, pg_color_magenta, pg_color_orange
 from onewire import ds18b20
-
+from rp_misc import RpGpio, rp_gpio_list
 
 # try:
 #     import RPi.GPIO as GPIO
@@ -156,6 +156,9 @@ class MainWindow(QMainWindow):
         self.thermal_sensors = QComboBox(self.centralwidget)
         self.thermal_sensors.activated.connect(self.select_sensor)
         self.heater_output = QComboBox(self.centralwidget)
+        for gpio in rp_gpio_list:
+            if gpio.is_busy() is False:
+                self.heater_output.addItem(gpio.name(), gpio)
 
         self.form_layout = QFormLayout(self.centralwidget)
         self.form_layout.addRow("Thermal sensor:", self.thermal_sensors)
